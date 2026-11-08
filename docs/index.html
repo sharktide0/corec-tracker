@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CoRec Gym Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+ :root{--bg:#111;--card:#1c1c1c;--fg:#eee;--dim:#999;--line:#333}
+ body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0 auto;padding:20px 16px;max-width:1100px}
+ h1{margin:0 0 4px;font-size:22px}.sub{color:var(--dim);font-size:13px;margin-bottom:20px}
+ .now{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+ .card{background:var(--card);border-radius:10px;padding:14px 18px;flex:1;min-width:150px}
+ .card b{font-size:30px;display:block}.card span{color:var(--dim);font-size:13px}
+ .box{background:var(--card);border-radius:10px;padding:16px;margin-bottom:16px}
+ h2{font-size:15px;margin:0 0 10px;color:#ccc}
+ .tabs button{background:#2a2a2a;color:var(--fg);border:0;border-radius:6px;padding:6px 12px;margin-right:6px;cursor:pointer}
+ .tabs button.on{background:#cfb991;color:#111}
+</style></head><body>
+<h1>CoRec Upper + Lower Gym</h1>
+<div class="sub" id="sub">Loading...</div>
+<div class="now" id="now"></div>
+<div class="box"><h2>Busiest time</h2><div class="now" id="busy" style="margin:0"></div></div>
+<div class="box"><h2>People over time</h2>
+ <div class="tabs" id="tabs"><button data-d="1" class="on">Today</button><button data-d="7">7 days</button><button data-d="0">All</button></div>
+ <canvas id="t" height="120"></canvas></div>
+<div class="box"><h2>Average people by hour of day</h2><canvas id="h" height="90"></canvas></div>
+<div class="box"><h2>Average by day of week</h2><canvas id="w" height="70"></canvas></div>
+<script>
+const AREAS=["Upper Gym","Lower Gym"], C={"Upper Gym":"#cfb991","Lower Gym":"#5b9bd5"};
+Chart.defaults.color="#aaa";Chart.defaults.borderColor="#333";
+let rows=[],tChart;
+fetch("log.csv?"+Date.now()).then(r=>r.text()).then(txt=>{
+  rows=txt.trim().split("\n").slice(1).map(l=>{const[t,a,c,cap,p,u,ck]=l.split(",");return{t:new Date(t),a,c:+c,cap:+cap,p:+p,u}}).filter(r=>!isNaN(r.t));
+  if(!rows.length){document.getElementById("sub").textContent="No data yet. First check runs within 15 min.";return}
+  const last=rows[rows.length-1].t;
+  document.getElementById("sub").textContent=`Plots only when Purdue posts an update · last update ${last.toLocaleString([], {weekday:"short",hour:"numeric",minute:"2-digit"})} · ${rows.length} readings logged`;
+  document.getElementById("now").innerHTML=AREAS.map(a=>{const r=rows.filter(x=>x.a==a).pop();return `<div class="card"><span>${a} now</span><b>${r?r.c:"-"}</b><span>${r?`${r.p}% full · cap ${r.cap}`:"closed"}</span></div>`}).join("");
+  drawTime(1);drawAvg();drawBusy();
+});
+function drawTime(days){
+  const cut=days?Date.now()-days*864e5:0;
+  if(days==1){const d=new Date();d.setHours(0,0,0,0);cut2=d.getTime()}
+  const from=days==1?cut2:cut;
+  tChart&&tChart.destroy();
+  tChart=new Chart(document.getElementById("t"),{type:"line",
+    data:{datasets:AREAS.map(a=>({label:a,data:withGaps(rows.filter(r=>r.a==a&&r.t>=from)),borderColor:C[a],backgroundColor:C[a],pointRadius:2,tension:.25}))},
+    options:{scales:{x:{type:"time",min:days==1?from+6*36e5:undefined,max:days==1?from+24*36e5:undefined,time:{unit:days==1?"hour":"day",tooltipFormat:"EEE MMM d, h:mm a",displayFormats:{hour:"h a",day:"EEE M/d"}}},y:{beginAtZero:true,title:{display:true,text:"people"}}},
+      plugins:{tooltip:{callbacks:{label:c=>c.raw.y==null?"":`${c.dataset.label}: ${c.raw.y} (${c.raw.p}%)`}}}}});
+}
+let cut2;
+// break the line when there's a 2h+ gap (closed overnight) instead of drawing across it
+function withGaps(rs){const out=[];rs.forEach((r,i)=>{if(i&&r.t-rs[i-1].t>2*36e5)out.push({x:new Date(rs[i-1].t.getTime()+1),y:null});out.push({x:r.t,y:r.c,p:r.p})});return out}
+document.getElementById("tabs").onclick=e=>{if(e.target.tagName!="BUTTON")return;[...e.currentTarget.children].forEach(b=>b.classList.toggle("on",b==e.target));drawTime(+e.target.dataset.d)};
+function avgBy(fn,n){return AREAS.map(a=>{const s=Array.from({length:n},()=>[]);rows.filter(r=>r.a==a).forEach(r=>s[fn(r.t)].push(r.c));return{label:a,backgroundColor:C[a],data:s.map(v=>v.length?Math.round(v.reduce((x,y)=>x+y,0)/v.length):null)}})}
+const DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const hr=h=>(h%12||12)+(h<12?" AM":" PM");
+function drawBusy(){
+  document.getElementById("busy").innerHTML=AREAS.map(a=>{
+    const rs=rows.filter(r=>r.a==a); if(!rs.length) return "";
+    // average by weekday+hour slot
+    const s={}; rs.forEach(r=>{const k=r.t.getDay()*24+r.t.getHours();(s[k]=s[k]||[]).push(r.c)});
+    const slots=Object.entries(s).map(([k,v])=>({d:k/24|0,h:k%24,avg:Math.round(v.reduce((x,y)=>x+y,0)/v.length)}));
+    const top=slots.reduce((m,x)=>x.avg>m.avg?x:m), low=slots.reduce((m,x)=>x.avg<m.avg?x:m);
+    // all-time peak single reading
+    const pk=rs.reduce((m,x)=>x.c>m.c?x:m);
+    return `<div class="card"><span>${a}</span><b style="font-size:22px">${DAYS[top.d]} ${hr(top.h)}</b><span>avg ${top.avg} people</span>
+      <div style="margin-top:10px;font-size:13px;color:#bbb">Quietest: ${DAYS[low.d]} ${hr(low.h)} (avg ${low.avg})<br>Record: ${pk.c} on ${pk.t.toLocaleString([], {weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</div></div>`;
+  }).join("") + `<div style="width:100%;font-size:12px;color:#888">Gets more accurate as more weeks are logged.</div>`;
+}
+function drawAvg(){
+  new Chart(document.getElementById("h"),{type:"bar",data:{labels:[...Array(24).keys()].map(h=>(h%12||12)+(h<12?"a":"p")),datasets:avgBy(d=>d.getHours(),24)},options:{scales:{y:{beginAtZero:true}}}});
+  new Chart(document.getElementById("w"),{type:"bar",data:{labels:["Sun","Mon","Tue","Wed","Thu","Fri","Sat"],datasets:avgBy(d=>d.getDay(),7)},options:{scales:{y:{beginAtZero:true}}}});
+}
+</script></body></html>
