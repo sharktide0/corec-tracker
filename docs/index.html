@@ -19,9 +19,7 @@ main{max-width:1040px;margin:0 auto;padding:28px 16px 48px}
 
 header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:20px}
 h1{font-size:22px;margin:0;letter-spacing:-.01em}
-.fresh{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:7px}
-.dot{width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 3px rgba(74,222,128,.15)}
-.dot.stale{background:var(--faint);box-shadow:none}
+.fresh{color:var(--muted);font-size:13px}
 
 .top{display:grid;grid-template-columns:1fr 1fr 1.25fr;gap:12px;margin-bottom:12px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px}
@@ -64,7 +62,7 @@ h2{font-size:16px;margin:0}
 .dl label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
 .btn{background:var(--accent);color:#111;border:0;border-radius:9px;font:inherit;font-size:14px;font-weight:600;padding:8px 16px;cursor:pointer}
 .btn:disabled{opacity:.4;cursor:default}
-.dl .hint{align-self:center}
+.dlgo{display:flex;align-items:center;gap:12px}
 footer{color:var(--faint);font-size:12px;margin-top:20px;line-height:1.6}
 footer a{color:var(--muted)}
 
@@ -81,7 +79,7 @@ footer a{color:var(--muted)}
 
 <header>
   <h1>CoRec Gym Tracker</h1>
-  <div class="fresh"><span class="dot" id="dot"></span><span id="fresh">Loading…</span></div>
+  <div class="fresh" id="fresh">Loading…</div>
 </header>
 
 <section class="top">
@@ -115,8 +113,7 @@ footer a{color:var(--muted)}
   <div class="dl">
     <label>From<input type="date" id="from"></label>
     <label>To<input type="date" id="to"></label>
-    <button class="btn" id="dlbtn">Download CSV</button>
-    <span class="hint num" id="dlcount"></span>
+    <div class="dlgo"><button class="btn" id="dlbtn">Download CSV</button><span class="hint num" id="dlcount"></span></div>
   </div>
 </section>
 
@@ -151,9 +148,8 @@ fetch("log.csv?"+Date.now()).then(r=>r.text()).then(txt=>{
 function drawNow(){
   const last=rows[rows.length-1].t, mins=Math.round((Date.now()-last)/6e4);
   const stale=mins>120;
-  $("dot").classList.toggle("stale",stale);
   const ago=mins<1?"just now":mins<60?`${mins} min ago`:mins<1440?`${Math.round(mins/60)} hr ago`:`${Math.round(mins/1440)} days ago`;
-  $("fresh").textContent=`Purdue updated ${time(last)} · ${ago}`;
+  $("fresh").textContent=`Purdue updated ${time(last)} (${ago})`;
   AREAS.forEach(({k,c})=>{
     const r=rows.filter(x=>x.a==k).pop();
     $(k=="Upper Gym"?"c-upper":"c-lower").innerHTML=`
@@ -204,14 +200,52 @@ function showDay(k){
   const data=AREAS.map(({k:a,c})=>({label:a,borderColor:c,backgroundColor:c,pointRadius:3,pointHoverRadius:5,borderWidth:2.5,tension:.3,
     data:gaps(rs.filter(r=>r.a==a))}));
   const ymax=Math.max(40,...rs.map(r=>r.c));
+  markers=dayMarkers(rs);
   if(chart){chart.data.datasets=data;chart.options.scales.x.min=d0+5*36e5;chart.options.scales.x.max=d0+24*36e5;chart.options.scales.y.suggestedMax=ymax;chart.update();return}
-  chart=new Chart($("chart"),{type:"line",data:{datasets:data},options:{
-    maintainAspectRatio:false,animation:{duration:250},interaction:{mode:"nearest",axis:"x",intersect:false},
+  chart=new Chart($("chart"),{type:"line",data:{datasets:data},plugins:[markerPlugin],options:{
+    maintainAspectRatio:false,animation:{duration:250},layout:{padding:{top:44}},interaction:{mode:"eachNearest",intersect:false},
     scales:{
       x:{type:"time",min:d0+5*36e5,max:d0+24*36e5,time:{unit:"hour",stepSize:3,displayFormats:{hour:"h a"},tooltipFormat:"h:mm a"},grid:{color:"#232326"},ticks:{color:"#8a8a90",maxRotation:0}},
       y:{beginAtZero:true,suggestedMax:ymax,grid:{color:"#232326"},ticks:{color:"#8a8a90",precision:0}}},
     plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.raw.y==null?"":` ${c.dataset.label}: ${c.raw.y} people (${c.raw.p}%)`}}}}});
 }
+// hover: show the closest point (by time) from EACH gym, even if their times differ
+Chart.Interaction.modes.eachNearest=(chart,e)=>{
+  const pos=Chart.helpers.getRelativePosition(e,chart),out=[];
+  chart.data.datasets.forEach((ds,i)=>{
+    let best=null,bd=Infinity;
+    chart.getDatasetMeta(i).data.forEach((el,j)=>{if(ds.data[j].y==null)return;const d=Math.abs(el.x-pos.x);if(d<bd){bd=d;best={element:el,datasetIndex:i,index:j}}});
+    if(best)out.push(best);
+  });
+  return out;
+};
+// busiest / quietest moment of the day = Purdue update with the highest / lowest combined count
+let markers=[];
+function dayMarkers(rs){
+  const groups=[];
+  rs.forEach(r=>{const g=groups[groups.length-1];if(g&&r.t-g.t<=5*6e4&&!g.a[r.a])g.a[r.a]=r.c;else groups.push({t:r.t,a:{[r.a]:r.c}})});
+  const full=groups.filter(g=>AREAS.every(({k})=>k in g.a)).map(g=>({t:g.t.getTime(),sum:Object.values(g.a).reduce((a,b)=>a+b,0)}));
+  if(full.length<2)return[];
+  const hi=full.reduce((m,x)=>x.sum>m.sum?x:m), lo=full.reduce((m,x)=>x.sum<m.sum?x:m);
+  return hi.sum==lo.sum?[]:[{t:hi.t,label:"Busiest",color:"#f2f2f2"},{t:lo.t,label:"Quietest",color:"#a3a3a8"}];
+}
+const markerPlugin={id:"markers",afterDatasetsDraw(c){
+  const {ctx,chartArea:a,scales:{x}}=c, placed=[];
+  markers.forEach(m=>{
+    const px=x.getPixelForValue(m.t); if(px<a.left||px>a.right)return;
+    ctx.save();
+    ctx.strokeStyle=m.color;ctx.globalAlpha=.55;ctx.setLineDash([4,4]);ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(px,a.top);ctx.lineTo(px,a.bottom);ctx.stroke();
+    ctx.globalAlpha=1;ctx.setLineDash([]);ctx.font="600 12px system-ui,sans-serif";ctx.fillStyle=m.color;ctx.textAlign="center";ctx.textBaseline="bottom";
+    const w=ctx.measureText(m.label).width;
+    let lx=Math.min(Math.max(px,a.left+w/2),a.right-w/2);           // keep label inside the chart
+    // labels stay centered on their line; if two would overlap, the second goes on a row above
+    const row=placed.some(p=>Math.abs(p.x-lx)<(p.w+w)/2+8)?1:0;
+    ctx.fillText(m.label,lx,a.top-8-row*17);placed.push({x:lx,w});
+    if(row){ctx.globalAlpha=.55;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(px,a.top-23);ctx.lineTo(px,a.top);ctx.stroke()}
+    ctx.restore();
+  });
+}};
 // don't draw a line across a 2h+ gap (closed / no updates)
 function gaps(rs){const o=[];rs.forEach((r,i)=>{if(i&&r.t-rs[i-1].t>2*36e5)o.push({x:rs[i-1].t.getTime()+1,y:null});o.push({x:r.t.getTime(),y:r.c,p:r.p})});return o}
 
