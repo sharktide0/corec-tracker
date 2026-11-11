@@ -36,6 +36,8 @@ h1{font-size:22px;margin:0;letter-spacing:-.01em}
 .seg{display:inline-flex;background:var(--raised);border-radius:9px;padding:3px}
 .seg button{border:0;background:none;color:var(--muted);font:inherit;font-size:13px;padding:5px 11px;border-radius:7px;cursor:pointer}
 .seg button.on{background:#3a3a3f;color:var(--fg)}
+.seg.days button{padding:5px 10px}
+.seg button.nodata{opacity:.4}
 select,input[type=date]{background:var(--raised);color:var(--fg);border:1px solid var(--line);border-radius:9px;font:inherit;font-size:13px;padding:6px 9px;color-scheme:dark}
 .bq-rows{margin-top:14px;display:grid;gap:10px}
 .bq-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
@@ -73,6 +75,7 @@ footer a{color:var(--muted)}
   .card,.panel{padding:16px}
   .chartbox{height:240px}
   .daynav{width:100%}
+  .seg.days{width:100%}.seg.days button{flex:1;padding:6px 0}
   .daynav input{flex:1}
 }
 </style></head><body><main>
@@ -92,6 +95,16 @@ footer a{color:var(--muted)}
     </div>
     <div class="bq-rows" id="bqrows"></div>
   </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Typical day</h2>
+    <div class="seg days" id="tdays"></div>
+  </div>
+  <div class="daystats" id="tstats"></div>
+  <div class="chartbox"><canvas id="tchart"></canvas><div class="empty" id="tempty" hidden>No data for this day yet</div></div>
+  <div class="legend"><span><i class="swatch" style="background:var(--upper)"></i>Upper Gym</span><span><i class="swatch" style="background:var(--lower)"></i>Lower Gym</span><span>Average people at each hour</span></div>
 </section>
 
 <section class="panel">
@@ -150,7 +163,7 @@ fetch("log.csv?"+Date.now()).then(r=>r.text()).then(txt=>{
   if(!rows.length){$("fresh").textContent="No data yet";return}
   rows.forEach(r=>(byDay[key(r.t)]=byDay[key(r.t)]||[]).push(r));
   days=Object.keys(byDay).sort();
-  drawNow(); setupBQ(); setupHistory(); drawWeek(); setupDownload();
+  drawNow(); setupBQ(); setupTypical(); setupHistory(); drawWeek(); setupDownload();
 });
 
 /* ---------- now cards ---------- */
@@ -187,6 +200,34 @@ function drawBQ(){
     const best=slots.reduce((m,x)=>(bqMode=="busy"?x.v>m.v:x.v<m.v)?x:m);
     return `<div class="bq-row"><div><div class="label"><i class="swatch" style="background:${c}"></i>${k}</div><div class="t num">${hr(best.h)}</div></div><div class="a num">avg ${best.v} people<br>${n} ${DAYS[wd]}${n==1?"":"s"} logged</div></div>`;
   }).join("");
+}
+
+/* ---------- typical day: average count per hour for one weekday ---------- */
+let tChart,tDay=new Date().getDay(),HOURS=[];
+function setupTypical(){
+  const hs=rows.map(r=>r.t.getHours());
+  const lo=Math.min(6,...hs), hi=Math.max(23,...hs);
+  HOURS=Array.from({length:hi-lo+1},(_,i)=>lo+i);
+  const has=new Set(rows.map(r=>r.t.getDay()));
+  const btns=()=>$("tdays").innerHTML=DAYS.map((d,i)=>`<button data-d="${i}" class="${i==tDay?"on":""}${has.has(i)?"":" nodata"}" aria-pressed="${i==tDay}">${d.slice(0,3)}</button>`).join("");
+  btns();
+  $("tdays").onclick=e=>{const b=e.target.closest("button");if(!b)return;tDay=+b.dataset.d;btns();drawTypical()};
+  drawTypical();
+}
+function drawTypical(){
+  const pick=rows.filter(r=>r.t.getDay()==tDay), n=new Set(pick.map(r=>key(r.t))).size;
+  $("tempty").hidden=pick.length>0;
+  const series=AREAS.map(({k})=>HOURS.map(h=>{const v=pick.filter(r=>r.a==k&&r.t.getHours()==h).map(r=>r.c);return v.length?avg(v):null}));
+  $("tstats").innerHTML=pick.length?AREAS.map(({k},i)=>{const s=series[i].map((v,j)=>({v,h:HOURS[j]})).filter(x=>x.v!=null);if(!s.length)return"";
+      const hi=s.reduce((m,x)=>x.v>m.v?x:m),lo=s.reduce((m,x)=>x.v<m.v?x:m);
+      return `${k}: busiest <b>${hr(hi.h)}</b>, quietest <b>${hr(lo.h)}</b>`}).filter(Boolean).join(" · ")+` <span style="color:var(--faint)">(${n} ${DAYS[tDay]}${n==1?"":"s"})</span>`:"";
+  const data=AREAS.map(({k,c},i)=>({label:k,data:series[i],borderColor:c,backgroundColor:c,pointRadius:3,pointHoverRadius:5,borderWidth:2.5,tension:.3,spanGaps:true}));
+  if(tChart){tChart.data.datasets=data;tChart.update();return}
+  tChart=new Chart($("tchart"),{type:"line",data:{labels:HOURS.map(hr),datasets:data},options:{
+    maintainAspectRatio:false,animation:{duration:250},interaction:{mode:"index",intersect:false},
+    scales:{x:{grid:{color:"#232326"},ticks:{color:"#8a8a90",maxRotation:0,autoSkip:true,maxTicksLimit:8}},
+      y:{beginAtZero:true,suggestedMax:40,grid:{color:"#232326"},ticks:{color:"#8a8a90",precision:0}}},
+    plugins:{legend:{display:false},tooltip:{callbacks:{title:it=>`${DAYS[tDay]}s around ${it[0].label}`,label:c=>c.raw==null?` ${c.dataset.label}: no data`:` ${c.dataset.label}: avg ${c.raw} people`}}}}});
 }
 
 /* ---------- history (one day at a time) ---------- */
