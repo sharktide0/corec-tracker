@@ -54,7 +54,7 @@ h2{font-size:16px;margin:0}
 .chartbox{position:relative;height:300px}
 .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);font-size:14px}
 [hidden]{display:none!important}
-.legend{display:flex;gap:16px;font-size:13px;color:var(--muted);margin-top:10px}
+.legend{display:flex;gap:6px 16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:10px}
 .legend span{display:flex;align-items:center;gap:6px}
 
 /* download */
@@ -109,6 +109,15 @@ footer a{color:var(--muted)}
 </section>
 
 <section class="panel">
+  <div class="panel-head"><h2>By day of week</h2></div>
+  <div class="chartbox"><canvas id="wchart"></canvas></div>
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--upper)"></i>Upper Gym</span><span><i class="swatch" style="background:var(--lower)"></i>Lower Gym</span>
+    <span>Solid = average</span><span><i class="swatch" style="border:1.5px dashed var(--muted);width:11px;height:11px"></i>Dashed = peak</span>
+  </div>
+</section>
+
+<section class="panel">
   <div class="panel-head"><h2>Download the data</h2></div>
   <div class="dl">
     <label>From<input type="date" id="from"></label>
@@ -141,7 +150,7 @@ fetch("log.csv?"+Date.now()).then(r=>r.text()).then(txt=>{
   if(!rows.length){$("fresh").textContent="No data yet";return}
   rows.forEach(r=>(byDay[key(r.t)]=byDay[key(r.t)]||[]).push(r));
   days=Object.keys(byDay).sort();
-  drawNow(); setupBQ(); setupHistory(); setupDownload();
+  drawNow(); setupBQ(); setupHistory(); drawWeek(); setupDownload();
 });
 
 /* ---------- now cards ---------- */
@@ -248,6 +257,37 @@ const markerPlugin={id:"markers",afterDatasetsDraw(c){
 }};
 // don't draw a line across a 2h+ gap (closed / no updates)
 function gaps(rs){const o=[];rs.forEach((r,i)=>{if(i&&r.t-rs[i-1].t>2*36e5)o.push({x:rs[i-1].t.getTime()+1,y:null});o.push({x:r.t.getTime(),y:r.c,p:r.p})});return o}
+
+/* ---------- by day of week: solid bar = average, dashed outline = peak ---------- */
+function drawWeek(){
+  const stat=a=>DAYS.map((_,d)=>{const v=rows.filter(r=>r.a==a&&r.t.getDay()==d).map(r=>r.c);return v.length?{avg:avg(v),peak:Math.max(...v),n:new Set(rows.filter(r=>r.a==a&&r.t.getDay()==d).map(r=>key(r.t))).size}:null});
+  const S={}; AREAS.forEach(({k})=>S[k]=stat(k));
+  const ds=[];
+  AREAS.forEach(({k,c})=>{
+    // same stack id + x stacked + y not stacked => peak and average overlap in one slot per gym
+    ds.push({label:k+" peak",peak:true,stack:k,data:S[k].map(s=>s&&s.peak),backgroundColor:c+"14",borderColor:c,borderWidth:0,order:2,gym:k});
+    ds.push({label:k,stack:k,data:S[k].map(s=>s&&s.avg),backgroundColor:c,borderRadius:3,order:1,gym:k});
+  });
+  new Chart($("wchart"),{type:"bar",data:{labels:DAYS.map(d=>d.slice(0,3)),datasets:ds},plugins:[dashedPeaks],options:{
+    maintainAspectRatio:false,animation:{duration:250},interaction:{mode:"index",intersect:false},
+    datasets:{bar:{categoryPercentage:.7,barPercentage:.85}},
+    scales:{x:{stacked:true,grid:{display:false},ticks:{color:"#8a8a90"}},y:{stacked:false,beginAtZero:true,grid:{color:"#232326"},ticks:{color:"#8a8a90",precision:0}}},
+    plugins:{legend:{display:false},tooltip:{
+      filter:i=>!i.dataset.peak,
+      callbacks:{title:it=>DAYS[it[0].dataIndex]+"s",label:i=>{const s=S[i.dataset.gym][i.dataIndex];return s?` ${i.dataset.gym}: avg ${s.avg} · peak ${s.peak} (${s.n} day${s.n==1?"":"s"})`:""}}}}}});
+}
+const dashedPeaks={id:"dashedPeaks",afterDatasetsDraw(c){
+  const ctx=c.ctx;
+  c.data.datasets.forEach((d,i)=>{if(!d.peak)return;
+    c.getDatasetMeta(i).data.forEach((el,j)=>{if(d.data[j]==null)return;
+      const {x,y,width}=el.getProps(["x","y","width"],true), l=x-width/2;
+      // dashed outline only above the solid average bar
+      const avgD=c.data.datasets.find(o=>!o.peak&&o.gym==d.gym), bot=c.scales.y.getPixelForValue(avgD.data[j]??0);
+      ctx.save();ctx.strokeStyle=d.borderColor;ctx.globalAlpha=.8;ctx.lineWidth=1.5;ctx.setLineDash([4,3]);
+      ctx.beginPath();ctx.moveTo(l,bot);ctx.lineTo(l,y);ctx.lineTo(l+width,y);ctx.lineTo(l+width,bot);ctx.stroke();ctx.restore();
+    });
+  });
+}};
 
 /* ---------- download ---------- */
 function setupDownload(){
