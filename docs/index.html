@@ -108,6 +108,15 @@ footer a{color:var(--muted)}
 </section>
 
 <section class="panel">
+  <div class="panel-head"><h2>By day of week</h2></div>
+  <div class="chartbox"><canvas id="wchart"></canvas></div>
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--upper)"></i>Upper Gym</span><span><i class="swatch" style="background:var(--lower)"></i>Lower Gym</span>
+    <span>Solid = average</span><span><i class="swatch" style="border:1.5px dashed var(--muted);width:11px;height:11px"></i>Dashed = peak</span>
+  </div>
+</section>
+
+<section class="panel">
   <div class="panel-head">
     <h2>History</h2>
     <div class="daynav">
@@ -119,15 +128,6 @@ footer a{color:var(--muted)}
   <div class="daystats num" id="dstats"></div>
   <div class="chartbox"><canvas id="chart"></canvas><div class="empty" id="empty" hidden>No readings on this day</div></div>
   <div class="legend"><span><i class="swatch" style="background:var(--upper)"></i>Upper Gym</span><span><i class="swatch" style="background:var(--lower)"></i>Lower Gym</span></div>
-</section>
-
-<section class="panel">
-  <div class="panel-head"><h2>By day of week</h2></div>
-  <div class="chartbox"><canvas id="wchart"></canvas></div>
-  <div class="legend">
-    <span><i class="swatch" style="background:var(--upper)"></i>Upper Gym</span><span><i class="swatch" style="background:var(--lower)"></i>Lower Gym</span>
-    <span>Solid = average</span><span><i class="swatch" style="border:1.5px dashed var(--muted);width:11px;height:11px"></i>Dashed = peak</span>
-  </div>
 </section>
 
 <section class="panel">
